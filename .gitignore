@@ -28,8 +28,7 @@ yarn-error.log*
 
 electron-builder.yml
 
-stable-diffusion/src/clip
-stable-diffusion/src/gfpgan
-stable-diffusion/src/k-diffusion
-stable-diffusion/src/realesrgan
-stable-diffusion/src/taming-transformers
+src/clip
+src/gfpgan/experiments/
+src/realesrgan/experiments/
+src/taming-transformers
