@@ -1,0 +1,6 @@
+{
+    "upscale_folder": "",
+    "upscale_dest": "",
+    "upscaler": "GFPGAN",
+    "upscale_factor": "2"
+}
