@@ -1,11 +1,3 @@
-"""
-wild mixture of
-https://github.com/lucidrains/denoising-diffusion-pytorch/blob/7706bdfc6f527f58d33f84b7b522e61e6e3164b3/denoising_diffusion_pytorch/denoising_diffusion_pytorch.py
-https://github.com/openai/improved-diffusion/blob/e94489283bb876ac1477d5dd7709bbbd2d9902ce/improved_diffusion/gaussian_diffusion.py
-https://github.com/CompVis/taming-transformers
--- merci
-"""
-
 import math
 from functools import partial
 
@@ -23,28 +15,6 @@ from ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, mak
 from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 from ldm.util import exists, default, instantiate_from_config
 
-import torch.nn as nn
-import k_diffusion as K   
-
-class CFGDenoiser(nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.inner_model = model
-
-    def forward(self, x, sigma, uncond, cond, cond_scale):
-        x_in = torch.cat([x] * 2)
-        sigma_in = torch.cat([sigma] * 2)
-        cond_in = torch.cat([uncond, cond])
-        uncond, cond = self.inner_model(x_in, sigma_in, cond=cond_in).chunk(2)
-        return uncond + (cond - uncond) * cond_scale
-
-def create_random_tensors(shape, seeds, device):
-    xs = []
-    for seed in seeds:
-        torch.manual_seed(seed)
-        xs.append(torch.randn(shape, device=device))
-    x = torch.stack(xs, 0)
-    return x
 
 # from samplers import CompVisDenoiser
 
@@ -528,7 +498,7 @@ class UNet(DDPM):
         # sampling
 
         if sampler == "plms":
-            print("Using PLMS Sampler")
+            print(f'Data shape for PLMS sampling is {shape}')
             samples = self.plms_sampling(conditioning, batch_size, x_latent,
                                          callback=callback,
                                          img_callback=img_callback,
@@ -545,23 +515,16 @@ class UNet(DDPM):
                                          )
 
         elif sampler == "ddim":
-            print("Using DDIM Sampler")
             samples = self.ddim_sampling(x_latent, conditioning, S,
                                          unconditional_guidance_scale=unconditional_guidance_scale,
                                          unconditional_conditioning=unconditional_conditioning,
                                          mask=mask, init_latent=x_T, use_original_steps=False)
 
-        else:
-            ksamplers = {'lms': K.sampling.sample_lms, 'euler': K.sampling.sample_euler_ancestral, 'dpm': K.sampling.sample_dpm_2_ancestral}
-            model_wrap = K.external.CompVisDenoiser(self.model2)
-            sampler = ksamplers[sampler]
-            print(f"Using {sampler.upper()} Sampler")
-            seeds = list(seed + batch_size + i for i in range(batch_size))
-            sigmas = model_wrap.get_sigmas(S)
-            x = create_random_tensors(shape, seeds, device=self.cdevice) * sigmas[0]
-            model_wrap_cfg = CFGDenoiser(model_wrap)
-            extra_args = {'cond': conditioning, 'uncond': unconditional_conditioning, 'cond_scale': unconditional_guidance_scale}
-            samples = sampler(model_wrap_cfg, x, sigmas, extra_args=extra_args, disable=False)
+        # elif sampler == "euler":
+        #     cvd = CompVisDenoiser(self.alphas_cumprod)
+        #     sig = cvd.get_sigmas(S)
+        #     samples = self.heun_sampling(noise, sig, conditioning, unconditional_conditioning=unconditional_conditioning,
+        #                                 unconditional_guidance_scale=unconditional_guidance_scale)
 
         if self.turbo:
             self.model1.to("cpu")
@@ -595,6 +558,7 @@ class UNet(DDPM):
                 assert x0 is not None
                 img_orig = self.q_sample(x0, ts)  # TODO: deterministic forward pass?
                 img = img_orig * mask + (1. - mask) * img
+                del img_orig
 
             outs = self.p_sample_plms(img, cond, ts, index=index, use_original_steps=ddim_use_original_steps,
                                       quantize_denoised=quantize_denoised, temperature=temperature,

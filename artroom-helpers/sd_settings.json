@@ -19,6 +19,7 @@
     "Config": {
         "use_optimized_version": true,
         "use_turbo": true,
+        "use_superfast": true,
         "use_full_precision": false,
         "image_save_path": "%UserProfile%/Desktop"
     }

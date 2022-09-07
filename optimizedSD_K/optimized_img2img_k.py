@@ -15,14 +15,14 @@ import torch.nn as nn
 from contextlib import contextmanager, nullcontext
 from einops import rearrange, repeat
 from ldm.util import instantiate_from_config
-from optimUtils import split_weighted_subprompts, logger
+from optimUtils import split_weighted_subprompts
 import k_diffusion as K
 from transformers import logging
 import pandas as pd
+logging.set_verbosity_error()
+import re
 import traceback
 from handle_errs import process_error_trace
-
-logging.set_verbosity_error()
 
 class CFGDenoiser(nn.Module):
     def __init__(self, model):
@@ -182,6 +182,12 @@ parser.add_argument(
     choices=["jpg", "png"],
     default="png",
 )
+
+parser.add_argument(
+    "--plms",
+    action='store_true',
+    help="Enables PLMS sampler.",
+)
 parser.add_argument(
     "--sampler",
     type=str,
@@ -192,6 +198,7 @@ parser.add_argument(
 parser.add_argument(
     "--ckpt",
     type=str,
+    default="models/ldm/stable-diffusion-v1/model.ckpt",
     help="path to checkpoint of model",
 )
 
@@ -214,7 +221,7 @@ grid_count = len(os.listdir(outpath)) - 1
 
 # if opt.seed == None:
 #     opt.seed = randint(0, 1000000)
-seed_everything(opt.seed)
+# seed_everything(opt.seed)
 
 # Logging
 # logger(vars(opt), log_csv = "logs/img2img_logs.csv")
@@ -251,7 +258,7 @@ model.turbo = opt.turbo
 
 # As the model no longer self-seeds on initialization, we must do this should we
 # reject the built-in sampling method.
-if not opt.sampler == "plms":
+if not opt.plms:
     model.make_schedule(ddim_num_steps=opt.ddim_steps, ddim_eta=opt.ddim_eta, verbose=False)
     
 modelCS = instantiate_from_config(config.modelCondStage)
@@ -263,7 +270,7 @@ modelFS = instantiate_from_config(config.modelFirstStage)
 _, _ = modelFS.load_state_dict(sd, strict=False)
 modelFS.eval()
 del sd
-model_wrap = K.external.CompVisDenoiser(model, device="cpu")
+model_wrap = K.external.CompVisDenoiser(model)
 sigma_min, sigma_max = model_wrap.sigmas[0].item(), model_wrap.sigmas[-1].item()
 
 if opt.device != 'cpu' and opt.precision == "autocast":
@@ -276,15 +283,16 @@ batch_size = opt.n_samples
 n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
 if not opt.from_file:
     prompt = opt.prompt
+    print("Prompt:",opt.prompt)
     assert prompt is not None
     data = [batch_size * [prompt]]
-
 else:
-    print(f"reading prompts from {opt.from_file}")
+    # print(f"reading prompts from {opt.from_file}")
     with open(opt.from_file, "r") as f:
-        data = f.read().splitlines()
-        data = batch_size * list(data)
-        data = list(chunk(sorted(data), batch_size))
+        opt.prompt = f.read().splitlines()[0]
+        print("Prompt:",opt.prompt)
+        # data = list(chunk(opt.prompt, batch_size))
+        data = [batch_size * [opt.prompt]]
 
 modelFS.to(opt.device)
 
@@ -307,15 +315,14 @@ if opt.precision == "autocast" and opt.device != "cpu":
     precision_scope = autocast
 else:
     precision_scope = nullcontext
-
 try:
-
     with torch.no_grad():
+
         all_samples = list()
         for n in trange(opt.n_iter, desc="Sampling"):
             for prompts in tqdm(data, desc="data"):
 
-                sample_path = os.path.join(outpath, "samples")
+                sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
                 os.makedirs(sample_path, exist_ok=True)
                 base_count = len(os.listdir(sample_path))
                 grid_count = len(os.listdir(outpath)) - 1
@@ -349,10 +356,10 @@ try:
 
                     samples_ddim = None
 
-                    if not opt.sampler == "plms":
-                        # sigmas = model_wrap.get_sigmas(opt.ddim_steps)
+                    if not opt.plms:
+                        sigmas = model_wrap.get_sigmas(opt.ddim_steps)
                         torch.manual_seed(opt.seed) # changes manual seeding procedure
-                        sigmas = K.sampling.get_sigmas_karras(opt.ddim_steps, sigma_min, sigma_max, device=opt.device)
+                        # sigmas = K.sampling.get_sigmas_karras(opt.ddim_steps, sigma_min, sigma_max, device=device)
                         noise = torch.randn_like(init_latent) * sigmas[opt.ddim_steps - t_enc - 1] # for GPU draw
                         xi = init_latent + noise
                         sigma_sched = sigmas[opt.ddim_steps - t_enc - 1:]
@@ -370,13 +377,14 @@ try:
                     modelFS.to(opt.device)
                     print("saving images")
                     for i in range(batch_size):
+
                         x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
                         x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
-                        x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
+                        x_sample = 255.0 * rearrange(x_sample[0].cpu().numpy(), "c h w -> h w c")
                         Image.fromarray(x_sample.astype(np.uint8)).save(
                             os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"))
                         Image.fromarray(x_sample.astype(np.uint8)).save(
-                            os.path.join(sample_path, "latest.png"))
+                            os.path.join(sample_path, "latest.png"))    
                         base_count += 1
                         opt.seed += 1
 

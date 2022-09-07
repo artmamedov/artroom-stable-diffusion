@@ -1,4 +1,5 @@
 import os
+from re import M
 import shutil
 from tqdm import tqdm
 import json
@@ -10,6 +11,8 @@ import shutil
 #Set up settings
 userprofile = os.environ["USERPROFILE"]
 os.makedirs(f"{userprofile}/artroom/settings/",exist_ok=True)
+os.makedirs(f"{userprofile}/artroom/model_weights/",exist_ok=True)
+os.makedirs(f"{userprofile}/artroom/model_weights/upscalers",exist_ok=True)
 
 if not os.path.exists(f"{userprofile}/artroom/settings/upscale_settings.json"):
     shutil.copy("upscale_settings.json",f"{userprofile}/artroom/settings/")
@@ -46,43 +49,49 @@ else:
         json.dump(update_original, outfile, indent=4)
 
 upscale_models = {
-    "RealESRGAN": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-    "RealESRGAN-anime": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-    "GFPGAN": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth"
+    "RealESRGANx2": {
+        "model_source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+        "model_dest": "stable-diffusion/src/realesrgan/realesrgan/weights/"
+    },
+    "RealESRGAN": {
+        "model_source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth", 
+        "model_dest": "stable-diffusion/src/realesrgan/experiments/pretrained_models/"
+    },
+    "RealESRGAN-anime": {
+        "model_source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth", 
+        "model_dest": "stable-diffusion/src/realesrgan/experiments/pretrained_models/"
+    },
+    "GFPGAN": {
+        "model_source": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth", 
+        "model_dest": "stable-diffusion/src/gfpgan/experiments/pretrained_models/"
+    },
+     "detection_Resnet50-lib": {
+        "model_source": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth", 
+        "model_dest":f"{userprofile}/artroom/miniconda3/envs/artroom-ldm/lib/site-packages/facexlib/weights/"
+    },  
+    "parsing_parsenet-lib":{
+        "model_source": "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth",
+        "model_dest":f"{userprofile}/artroom/miniconda3/envs/artroom-ldm/lib/site-packages/facexlib/weights/"
+    },
+    "detection_Resnet50": {
+        "model_source": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth", 
+        "model_dest": "stable-diffusion/src/gfpgan/gfpgan/weights/"
+    },  
+    "parsing_parsenet":{
+        "model_source": "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth",
+        "model_dest": "stable-diffusion/src/gfpgan/gfpgan/weights/"
+    } 
 }
 
-print("Downloading upscalers...")
-url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth"
-model_name = os.path.basename(url)
-model_dest = "stable-diffusion/src/realesrgan/realesrgan/weights/"
-#Remove broken download if failed during install
-if os.path.exists(model_name):
-    os.remove(model_name)
-if not os.path.exists(model_dest+model_name):
-    print(f"Downloading {model_name}...")
-    response = requests.get(url, stream=True)
-    total_size_in_bytes= int(response.headers.get('content-length', 0))
-    block_size = 1024 #1 Kibibyte
-    progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
-    with open(model_name, 'wb') as file:
-        for data in response.iter_content(block_size):
-            progress_bar.update(len(data))
-            file.write(data)
-    progress_bar.close()
-    if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
-        print("ERROR, something went wrong")            
-    shutil.move(model_name,model_dest)
-
 for model in upscale_models:
-    url = upscale_models[model]
+    url = upscale_models[model]["model_source"]
+    model_dest = upscale_models[model]["model_dest"]
     model_name = os.path.basename(url)
-    if "RealESRGAN" in model_name:
-        model_dest = "stable-diffusion/src/realesrgan/experiments/pretrained_models/"
-    elif "GFPGAN" in model:
-        model_dest = "stable-diffusion/src/gfpgan/experiments/pretrained_models/"
     #Remove broken download if failed during install
     if os.path.exists(model_name):
         os.remove(model_name)
+    if os.path.exists(f"{userprofile}/artroom/model_weights/upscalers/{model_name}"):
+        shutil.copy(f"{userprofile}/artroom/model_weights/upscalers/{model_name}", model_dest)
     if not os.path.exists(model_dest+model_name):
         print(f"Downloading {model_name}...")
         response = requests.get(url, stream=True)
@@ -95,8 +104,10 @@ for model in upscale_models:
                 file.write(data)
         progress_bar.close()
         if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
-            print("ERROR, something went wrong")            
-        shutil.move(model_name,model_dest)
+            print("ERROR, something went wrong")
+        shutil.move(model_name,f"{userprofile}/artroom/model_weights/upscalers/{model_name}")
+        shutil.copy(f"{userprofile}/artroom/model_weights/upscalers/{model_name}", model_dest)
+
 
 model_dl_json = json.load(open("model_downloader.json"))
 

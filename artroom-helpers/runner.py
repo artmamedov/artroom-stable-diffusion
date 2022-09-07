@@ -42,15 +42,15 @@ if sd_settings['init_image'] == "":
 else:
     #img2img
     if sd_config['use_optimized_version']:
-        runner_script = "optimizedSD/optimized_img2img_new.py"
+        runner_script = "optimizedSD/optimized_img2img.py"
         # Samplers not included in img2img yet
         if sd_settings['sampler'] != "ddim" and sd_settings['sampler'] != "plms":
-            runner_script = "optimizedSD/optimized_img2img_k.py"
+            runner_script = "optimizedSD_K/optimized_img2img_k.py"
     else:
         runner_script = "scripts/img2img.py"
         # Samplers not included in img2img yet
-        # if sd_settings['sampler'] != "ddim" and sd_settings['sampler'] != "plms":
-        #     runner_script = "scripts/img2img_k.py"
+        if sd_settings['sampler'] != "ddim" and sd_settings['sampler'] != "plms":
+            runner_script = "scripts/img2img_k.py"
 
 prompt_file_path = f"{userprofile}/artroom/settings/prompt.txt"
 with open(prompt_file_path, "w") as f:
@@ -70,8 +70,11 @@ script_command = [ f"{userprofile}\\artroom\\miniconda3\\condabin\\activate.bat"
                     "--skip_grid"
                     ]    
 
-if sd_config['use_turbo'] and sd_config['use_optimized_version']:
-    script_command += ["--turbo"]
+if sd_config['use_optimized_version']:
+    if sd_config['use_turbo']:
+        script_command += ["--turbo"]
+    if sd_config['use_superfast']:
+        script_command += ["--superfast"]
 
 if sd_config['use_full_precision']:
     script_command += ["--precision","full"]
@@ -83,7 +86,6 @@ if sd_settings['aspect_ratio'] != "Init Image" or len(sd_settings['init_image'])
 if sd_settings['init_image'] != "":
     script_command += ["--init-img",sd_settings['init_image']]
     script_command += ["--strength",str(sd_settings['strength'])]
-
 else:    
     if not sd_config['use_optimized_version']:
         if sd_settings['sampler'] == "plms":
@@ -108,8 +110,8 @@ try:
     time.sleep(1)
     process = subprocess.run(script_command)
     print("Finished!")
-    time.sleep(3000)
+    time.sleep(3)
 
 except Exception as e:
     print(f"ERROR: {e}")
-    time.sleep(10000)
+    time.sleep(10)

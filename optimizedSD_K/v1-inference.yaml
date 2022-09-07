@@ -1,6 +1,6 @@
 modelUNet:
   base_learning_rate: 1.0e-04
-  target: optimizedSD.ddpm.UNet
+  target: ddpm.UNet
   params:
     linear_start: 0.00085
     linear_end: 0.0120
@@ -18,7 +18,7 @@ modelUNet:
     use_ema: False
 
     unetConfigEncode:
-      target: optimizedSD.openaimodelSplit.UNetModelEncode
+      target: openaimodelSplit.UNetModelEncode
       params:
         image_size: 32 # unused
         in_channels: 4
@@ -35,7 +35,7 @@ modelUNet:
         legacy: False
 
     unetConfigDecode:
-      target: optimizedSD.openaimodelSplit.UNetModelDecode
+      target: openaimodelSplit.UNetModelDecode
       params:
         image_size: 32 # unused
         in_channels: 4
@@ -52,7 +52,7 @@ modelUNet:
         legacy: False
 
 modelFirstStage:
-  target: optimizedSD.ddpm.FirstStage
+  target: ddpm.FirstStage
   params:
     linear_start: 0.00085
     linear_end: 0.0120
@@ -92,7 +92,7 @@ modelFirstStage:
           target: torch.nn.Identity
 
 modelCondStage:
-  target: optimizedSD.ddpm.CondStage
+  target: ddpm.CondStage
   params:
     linear_start: 0.00085
     linear_end: 0.0120
@@ -111,4 +111,4 @@ modelCondStage:
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPEmbedder
       params:
-        device: cpu
+        device: cuda

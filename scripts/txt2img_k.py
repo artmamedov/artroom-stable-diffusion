@@ -22,7 +22,7 @@ import traceback
 from handle_errs import process_error_trace
 
 from ldm.util import instantiate_from_config
-from optimUtils import split_weighted_subprompts, logger
+from optimUtils import split_weighted_subprompts
 
 def chunk(it, size):
     it = iter(it)
@@ -289,7 +289,7 @@ def main():
                         Image.fromarray(x_sample.astype(np.uint8)).save(
                             os.path.join(sample_path, "latest.png"))    
                         base_count += 1
-
+                        opt.seed +=1 
                 if  not opt.skip_grid:
                     all_samples.append(x_samples_ddim)
 

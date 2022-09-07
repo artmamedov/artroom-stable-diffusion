@@ -36,8 +36,6 @@ def load_model_from_config(ckpt, verbose=False):
     return sd
 
 
-config = "optimizedSD/v1-inference.yaml"
-
 parser = argparse.ArgumentParser()
 
 parser.add_argument(
@@ -182,10 +180,19 @@ parser.add_argument(
     choices=["ddim", "plms"],
     default="ddim",
 )
+parser.add_argument(
+    "--superfast",
+    action="store_true",
+    help="Reduces inference time on the expense of 1GB VRAM",
+)
 
 opt = parser.parse_args()
 device = opt.device
 ckpt = opt.ckpt
+if opt.superfast:
+    config = "optimizedSD/v1-inference.yaml"
+else:
+    config = "optimizedSD/v1-inference_lowvram.yaml"
 
 tic = time.time()
 os.makedirs(opt.outdir, exist_ok=True)
@@ -334,7 +341,6 @@ with torch.no_grad():
                         os.path.join(sample_path, "latest.png"))
                     base_count += 1
                     opt.seed += 1
-
 
                 mem = torch.cuda.memory_allocated()/1e6
                 modelFS.to("cpu")

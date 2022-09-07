@@ -50,7 +50,7 @@ elif upscaler == "RealESRGAN-Anime":
     os.chdir('stable-diffusion/src/realesrgan')
     script_command = [ f"{userprofile}\\artroom\\miniconda3\\condabin\\activate.bat","&&",
                 f"conda", "run","--no-capture-output", "-p", f"{userprofile}/artroom/miniconda3/envs/artroom-ldm",
-                "python", "inference_realesrgan.py","-i",f"{upscale_queue_path}","-o",f"{upscale_folder}/upscaled","-s",f"{upscale_factor}","--suffix","_upscaled","--tile","400",
+                "python", "inference_realesrgan.py","-i",f"{upscale_queue_path}","-o",f"{upscale_folder}/upscaled-anime","-s",f"{upscale_factor}","--suffix","_upscaled","--tile","400",
                 "--model", "RealESRGAN_x4plus_anime_6B"
                 ]    
     print("Running....")

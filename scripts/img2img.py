@@ -14,8 +14,7 @@ from torch import autocast
 from contextlib import nullcontext
 import time
 from pytorch_lightning import seed_everything
-from transformers import logging
-logging.set_verbosity_error()
+import accelerate
 
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
@@ -23,7 +22,9 @@ from ldm.models.diffusion.plms import PLMSSampler
 import re
 import traceback
 from handle_errs import process_error_trace
-from optimUtils import split_weighted_subprompts, logger
+from optimUtils import split_weighted_subprompts
+from transformers import logging
+logging.set_verbosity_error()
 
 def chunk(it, size):
     it = iter(it)
@@ -223,13 +224,18 @@ def main():
         help="Reduces inference time on the expense of 1GB VRAM",
     )
     opt = parser.parse_args()
-    seed_everything(opt.seed)
+    accelerator = accelerate.Accelerator()
+    device = accelerator.device
 
+    seed_everything(opt.seed)
+    seeds = torch.randint(-2 ** 63, 2 ** 63 - 1, [accelerator.num_processes])
+    torch.manual_seed(seeds[accelerator.process_index].item())
+    
     config = OmegaConf.load(f"{opt.config}")
     model = load_model_from_config(config, f"{opt.ckpt}")
     model.turbo = opt.turbo
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
     
     sampler = DDIMSampler(model)
@@ -264,7 +270,6 @@ def main():
     grid_count = len(os.listdir(outpath)) - 1
 
     try:
-
         assert os.path.isfile(opt.init_img)
         init_image = load_img(opt.init_img, opt.H, opt.W).to(device)
         init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
@@ -289,6 +294,7 @@ def main():
                                 uc = model.get_learned_conditioning(batch_size * [""])
                             if isinstance(prompts, tuple):
                                 prompts = list(prompts)
+                            
                             subprompts, weights = split_weighted_subprompts(prompts[0])
                             if len(subprompts) > 1:
                                 c = torch.zeros_like(uc)
@@ -319,6 +325,7 @@ def main():
                                     Image.fromarray(x_sample.astype(np.uint8)).save(
                                         os.path.join(sample_path, "latest.png"))    
                                     base_count += 1
+                                    opt.seed += 1
                             all_samples.append(x_samples)
 
                     if not opt.skip_grid:
