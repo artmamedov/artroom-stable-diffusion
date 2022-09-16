@@ -1,5 +1,4 @@
 import argparse, os, sys, glob, random
-from handle_errs import process_error_trace
 import torch
 import numpy as np
 import traceback
@@ -19,7 +18,7 @@ from ldm.util import instantiate_from_config
 import re
 from transformers import logging
 logging.set_verbosity_error()
-from handle_errs import process_error_trace
+from scripts.handle_errs import process_error_trace
 from optimUtils import split_weighted_subprompts
 Image.MAX_IMAGE_PIXELS = None
 
@@ -230,89 +229,94 @@ config = OmegaConf.load(f"{config}")
 #     config.modelUNet.params.small_batch = False
 
 
-
-model = instantiate_from_config(config.modelUNet)
-_, _ = model.load_state_dict(sd, strict=False)
-model.eval()
-model.cdevice = opt.device
-model.unet_bs = opt.unet_bs
-model.turbo = opt.turbo
-
-
-modelCS = instantiate_from_config(config.modelCondStage)
-_, _ = modelCS.load_state_dict(sd, strict=False)
-modelCS.eval()
-    
-modelFS = instantiate_from_config(config.modelFirstStage)
-_, _ = modelFS.load_state_dict(sd, strict=False)
-modelFS.eval()
-del sd
-
-if opt.precision == "autocast":
-    model.half()
-    modelCS.half()
-
-start_code = None
-if opt.fixed_code:
-    start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
+try:
+    model = instantiate_from_config(config.modelUNet)
+    _, _ = model.load_state_dict(sd, strict=False)
+    model.eval()
+    model.cdevice = opt.device
+    model.unet_bs = opt.unet_bs
+    model.turbo = opt.turbo
 
 
-batch_size = opt.n_samples
-n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
-if not opt.from_file:
-    prompt = opt.prompt
-    print("Prompt:",opt.prompt)
-    assert prompt is not None
-    data = [batch_size * [prompt]]
-else:
-    # print(f"reading prompts from {opt.from_file}")
-    with open(opt.from_file, "r") as f:
-        opt.prompt = f.read().splitlines()[0]
+    modelCS = instantiate_from_config(config.modelCondStage)
+    _, _ = modelCS.load_state_dict(sd, strict=False)
+    modelCS.eval()
+        
+    modelFS = instantiate_from_config(config.modelFirstStage)
+    _, _ = modelFS.load_state_dict(sd, strict=False)
+    modelFS.eval()
+    del sd
+
+    if opt.precision == "autocast":
+        model.half()
+        modelCS.half()
+        torch.set_default_tensor_type(torch.HalfTensor)
+
+    start_code = None
+    if opt.fixed_code:
+        start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
+
+    batch_size = opt.n_samples
+    n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
+    if not opt.from_file:
+        prompt = opt.prompt
         print("Prompt:",opt.prompt)
-        # data = list(chunk(opt.prompt, batch_size))
-        data = [batch_size * [opt.prompt]]
+        assert prompt is not None
+        data = [batch_size * [prompt]]
+    else:
+        with open(opt.from_file+"prompt.txt", "r") as f:
+            opt.prompt = f.read().splitlines()[0]
+            print("Prompt:",opt.prompt)
+            # data = list(chunk(opt.prompt, batch_size))
+            data = [batch_size * [opt.prompt]]
+        try:
+            with open(opt.from_file+"negative_prompt.txt", "r") as f:
+                negative_prompt = f.read().splitlines()[0]
+                print("Negative Prompt:",negative_prompt)
+                negative_prompt_data = [batch_size * negative_prompt]
+        except:
+            negative_prompt_data = [batch_size * ""]
 
-sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
-os.makedirs(sample_path, exist_ok=True)
-base_count = len(os.listdir(sample_path))
-grid_count = len(os.listdir(outpath)) - 1
+    sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
+    os.makedirs(sample_path, exist_ok=True)
+    base_count = len(os.listdir(sample_path))
+    grid_count = len(os.listdir(outpath)) - 1
 
-precision_scope = autocast if opt.precision=="autocast" else nullcontext
-with torch.no_grad():
+    precision_scope = autocast if opt.precision=="autocast" else nullcontext
+    with torch.no_grad():
 
-    all_samples = list()
-    for n in trange(opt.n_iter, desc="Sampling"):
-        for prompts in tqdm(data, desc="data"):
-             with precision_scope("cuda"):
-                modelCS.to(device)
-                uc = None
-                
-                if opt.scale != 1.0:
-                    uc = modelCS.get_learned_conditioning(batch_size * [""])
-                if isinstance(prompts, tuple):
-                    prompts = list(prompts)
+        all_samples = list()
+        for n in trange(opt.n_iter, desc="Sampling"):
+            for prompts in tqdm(data, desc="data"):
+                with precision_scope("cuda"):
+                    modelCS.to(device)
+                    uc = None
+                    
+                    if opt.scale != 1.0:
+                        uc = modelCS.get_learned_conditioning(negative_prompt_data)
+                    if isinstance(prompts, tuple):
+                        prompts = list(prompts)
 
-                subprompts, weights = split_weighted_subprompts(prompts[0])
-                if len(subprompts) > 1:
-                    c = torch.zeros_like(uc)
-                    totalWeight = sum(weights)
-                    # normalize each "sub prompt" and add it
-                    for i in range(len(subprompts)):
-                        weight = weights[i]
-                        # if not skip_normalize:
-                        weight = weight / totalWeight
-                        c = torch.add(c, modelCS.get_learned_conditioning(subprompts[i]), alpha=weight)
-                else:
-                    c = modelCS.get_learned_conditioning(prompts)
+                    subprompts, weights = split_weighted_subprompts(prompts[0])
+                    if len(subprompts) > 1:
+                        c = torch.zeros_like(uc)
+                        totalWeight = sum(weights)
+                        # normalize each "sub prompt" and add it
+                        for i in range(len(subprompts)):
+                            weight = weights[i]
+                            # if not skip_normalize:
+                            weight = weight / totalWeight
+                            c = torch.add(c, modelCS.get_learned_conditioning(subprompts[i]), alpha=weight)
+                    else:
+                        c = modelCS.get_learned_conditioning(prompts)
 
-                shape = [opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f]
-                
-                mem = torch.cuda.memory_allocated()/1e6
-                modelCS.to("cpu")
-                while(torch.cuda.memory_allocated()/1e6 >= mem):
-                    time.sleep(1)
+                    shape = [opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f]
+                    
+                    mem = torch.cuda.memory_allocated()/1e6
+                    modelCS.to("cpu")
+                    while(torch.cuda.memory_allocated()/1e6 >= mem):
+                        time.sleep(1)
 
-                try:
                     samples_ddim = model.sample(
                                 S=opt.ddim_steps,
                                 conditioning=c,
@@ -325,29 +329,29 @@ with torch.no_grad():
                                 x_T=start_code,
                                 sampler=opt.sampler,
                             )
-                except Exception as err:
-                    print(opt.from_file)
-                    process_error_trace(traceback.format_exc(), err, opt.from_file)
-            
-                modelFS.to(device)
-                print("saving images")
-                for i in range(batch_size):
-                    x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
-                    x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
-                    x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
-                    Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"))
-                    Image.fromarray(x_sample.astype(np.uint8)).save(
-                        os.path.join(sample_path, "latest.png"))
-                    base_count += 1
-                    opt.seed += 1
+                
+                    modelFS.to(device)
+                    print("saving images")
+                    for i in range(batch_size):
+                        x_samples_ddim = modelFS.decode_first_stage(samples_ddim[i].unsqueeze(0))
+                        x_sample = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+                        x_sample = 255. * rearrange(x_sample[0].cpu().numpy(), 'c h w -> h w c')
+                        Image.fromarray(x_sample.astype(np.uint8)).save(
+                            os.path.join(sample_path, "seed_" + str(opt.seed) + "_" + f"{base_count:05}.png"))
+                        Image.fromarray(x_sample.astype(np.uint8)).save(
+                            os.path.join(sample_path, "latest.png"))
+                        base_count += 1
+                        opt.seed += 1
 
-                mem = torch.cuda.memory_allocated()/1e6
-                modelFS.to("cpu")
-                while(torch.cuda.memory_allocated()/1e6 >= mem):
-                    time.sleep(1)
-                del samples_ddim
-                print("memory_final = ", torch.cuda.memory_allocated()/1e6)
+                    mem = torch.cuda.memory_allocated()/1e6
+                    modelFS.to("cpu")
+                    while(torch.cuda.memory_allocated()/1e6 >= mem):
+                        time.sleep(1)
+                    del samples_ddim
+                    print("memory_final = ", torch.cuda.memory_allocated()/1e6)
+except Exception as err:
+    print(opt.from_file)
+    process_error_trace(traceback.format_exc(), err, opt.from_file, outpath)
 
 toc = time.time()
 

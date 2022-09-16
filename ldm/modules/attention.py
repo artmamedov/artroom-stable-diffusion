@@ -169,61 +169,59 @@ class CrossAttention(nn.Module):
             nn.Linear(inner_dim, query_dim),
             nn.Dropout(dropout)
         )
-        self.forward = self.fast_forward if superfastmode else self.slow_forward
+        self.fast_forward = superfastmode
+        # self.forward = self.fast_forward if superfastmode else self.slow_forward
 
-    def fast_forward(self, x, context=None, mask=None):
-        h = self.heads
-        q = self.to_q(x)
-        context = default(context, x)
-        k = self.to_k(context)
-        v = self.to_v(context)
-        del context, x
-
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
-
-        sim = einsum('b i d, b j d -> b i j', q, k)  # (8, 4096, 40)
-        sim *= self.scale
-        del q, k
-
-        if exists(mask):
-            mask = rearrange(mask, 'b ... -> b (...)')
-            max_neg_value = -torch.finfo(sim.dtype).max
-            mask = repeat(mask, 'b j -> (b h) () j', h=h)
-            sim.masked_fill_(~mask, max_neg_value)
-            del mask
-
-        sim[4:] = sim[4:].softmax(dim=-1)
-        sim[:4] = sim[:4].softmax(dim=-1)
-
-        sim = einsum('b i j, b j d -> b i d', sim, v)
-        sim = rearrange(sim, '(b h) n d -> b n (h d)', h=h)
-        del h, v
-
-        return self.to_out(sim)
-
-    def slow_forward(self, x, context=None, mask=None):
+    def forward(self, x, speed_mp=None, context=None, mask=None):
         h = self.heads
         device = x.device
-        q = self.to_q(x)
+        secondary_device = device if self.fast_forward else torch.device("cpu")
+        dtype = x.dtype
+        q_proj = self.to_q(x)
         context = default(context, x)
-        k = self.to_k(context)
-        v = self.to_v(context)
+        k_proj = self.to_k(context)
+        v_proj = self.to_v(context)
+
         del context, x
 
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+        stats = torch.cuda.memory_stats(device)
+        mem_active = stats['active_bytes.all.current']
+        mem_reserved = stats['reserved_bytes.all.current']
+        mem_free_cuda, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
+        mem_free_torch = mem_reserved - mem_active
+        mem_free_total = mem_free_cuda + mem_free_torch
 
-        r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2])
-        for i in range(0, q.shape[0], 2):
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q_proj, k_proj, v_proj))
+        del q_proj, k_proj, v_proj
+        torch.cuda.empty_cache()
+
+        allocatable_mem = int(mem_free_total // 2)+1 if dtype == torch.float16 else \
+            int(mem_free_total // 4)+1
+
+        speed_mp = (2 if self.fast_forward else 4) if speed_mp is None else speed_mp
+        speed_mp = speed_mp * math.ceil(mem_free_total / 7055867392) + 1
+        # torch.Size([8, 50176, 40]) : 5  # 1792
+        # torch.Size([8, 46656, 40]) : 5  # 1728
+        # torch.Size([8, 43264, 40]) : 4  # 1664
+        # torch.Size([8, 40000, 40]) : 4  # 1600
+        # torch.Size([8, 36864, 40]) : 3  # 1536
+
+        chunk_split = math.ceil(1.7**(math.ceil(math.log((q.shape[0] * q.shape[1] * q.shape[2]) / allocatable_mem, 2)))*100) * speed_mp  # yes it's crazy
+        # print(f"allocatable_mem: {allocatable_mem}, q.shape: {q.shape}, chunk_split: {chunk_split}")
+        # print(q.shape) torch.Size([1, 4096, 320])
+
+        r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2], device=secondary_device)
+        mp = q.shape[1]//chunk_split
+        for i in range(0, q.shape[1], mp):
             q, k = q.to(device), k.to(device)
-            s1 = einsum('b i d, b j d -> b i j', q[i:i + 2], k[i:i + 2])
-            q, k = q.cpu(), k.cpu()
+            s1 = einsum('b i d, b j d -> b i j', q[:, i:i + mp], k)
+            q, k = q.to(secondary_device), k.to(secondary_device)
             s1 *= self.scale
-
-            s1[1:] = s1[1:].softmax(dim=-1)
-            s1[:1] = s1[:1].softmax(dim=-1)
-
-            r1[i:i + 2] = einsum('b i j, b j d -> b i d', s1, v[i:i + 2]).cpu()
-        del s1
+            s1 = F.softmax(s1, dim=-1)
+            # del s1
+            r1[:, i:i + mp] = einsum('b i j, b j d -> b i d', s1, v).to(secondary_device)
+            del s1
+            # del s2
         r2 = rearrange(r1.to(device), '(b h) n d -> b n (h d)', h=h).to(device)
         del r1, q, k, v
 
@@ -243,14 +241,13 @@ class BasicTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
-        self.superfastmode = superfastmode
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, speed_mp=None, context=None):
+        return checkpoint(self._forward, (x, speed_mp, context), self.parameters(), self.checkpoint)
 
-    def _forward(self, x, context=None):
-        x = self.attn1(self.norm1(x)) + x
-        x = self.attn2(self.norm2(x), context=context) + x
+    def _forward(self, x, speed_mp=None, context=None):
+        x = self.attn1(self.norm1(x), speed_mp=speed_mp) + x
+        x = self.attn2(self.norm2(x), speed_mp=speed_mp, context=context) + x
         x = self.ff(self.norm3(x)) + x
         return x
 
@@ -288,7 +285,7 @@ class SpatialTransformer(nn.Module):
                                               stride=1,
                                               padding=0))
 
-    def forward(self, x, context=None):
+    def forward(self, x, context=None, speed_mp=None):
         # note: if no context is given, cross-attention defaults to self-attention
         b, c, h, w = x.shape
         x_in = x
@@ -296,7 +293,7 @@ class SpatialTransformer(nn.Module):
         x = self.proj_in(x)
         x = rearrange(x, 'b c h w -> b (h w) c')
         for block in self.transformer_blocks:
-            x = block(x, context=context)
+            x = block(x, speed_mp=speed_mp, context=context)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
         x = self.proj_out(x)
         return x + x_in

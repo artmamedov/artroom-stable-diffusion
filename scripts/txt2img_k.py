@@ -210,7 +210,8 @@ def main():
 
     if opt.precision == "autocast":
         model = model.half()
-
+        torch.set_default_tensor_type(torch.HalfTensor)
+    
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     #model = model.to(device)
     ksamplers = {'lms': K.sampling.sample_lms, 
@@ -232,14 +233,20 @@ def main():
         prompt = opt.prompt
         print("Prompt:",opt.prompt)
         assert prompt is not None
-        data = batch_size * [prompt]
+        data = [batch_size * prompt]
     else:
-        # print(f"reading prompts from {opt.from_file}")
-        with open(opt.from_file, "r") as f:
+        with open(opt.from_file+"prompt.txt", "r") as f:
             opt.prompt = f.read().splitlines()[0]
             print("Prompt:",opt.prompt)
             # data = list(chunk(opt.prompt, batch_size))
-            data = batch_size * [opt.prompt]
+            data = [batch_size * opt.prompt]
+        try:
+            with open(opt.from_file+"negative_prompt.txt", "r") as f:
+                negative_prompt = f.read().splitlines()[0]
+                print("Negative Prompt:",negative_prompt)
+                negative_prompt_data = [batch_size * negative_prompt]
+        except:
+            negative_prompt_data = [batch_size * ""]
 
     try:
         sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
@@ -254,7 +261,7 @@ def main():
                 seeds = list(opt.seed + n*batch_size + i for i in range(batch_size))
                 uc = None
                 if opt.scale != 1.0:
-                    uc = model.get_learned_conditioning(batch_size * [""])
+                    uc = model.get_learned_conditioning(negative_prompt_data)
                 if isinstance(data, tuple):
                     data = list(data)
                 subprompts, weights = split_weighted_subprompts(data[0])
@@ -305,7 +312,7 @@ def main():
                 grid_count += 1
     except Exception as err:
         print(opt.from_file)
-        process_error_trace(traceback.format_exc(), err, opt.from_file)
+        process_error_trace(traceback.format_exc(), err, opt.from_file, outpath)
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

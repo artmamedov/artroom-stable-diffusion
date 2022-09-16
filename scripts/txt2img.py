@@ -215,17 +215,22 @@ def main():
     n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
     if not opt.from_file:
         prompt = opt.prompt
-        print("Prompt",opt.prompt)
+        print("Prompt:",opt.prompt)
         assert prompt is not None
         data = [batch_size * [prompt]]
-
     else:
-        # print(f"reading prompts from {opt.from_file}")
-        with open(opt.from_file, "r") as f:
+        with open(opt.from_file+"prompt.txt", "r") as f:
             opt.prompt = f.read().splitlines()[0]
             print("Prompt:",opt.prompt)
             # data = list(chunk(opt.prompt, batch_size))
             data = [batch_size * [opt.prompt]]
+        try:
+            with open(opt.from_file+"negative_prompt.txt", "r") as f:
+                negative_prompt = f.read().splitlines()[0]
+                print("Negative Prompt:",negative_prompt)
+                negative_prompt_data = [batch_size * negative_prompt]
+        except:
+            negative_prompt_data = [batch_size * ""]
 
     sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
     
@@ -239,6 +244,8 @@ def main():
             start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
 
         precision_scope = autocast if opt.precision=="autocast" else nullcontext
+        if opt.precision == "autocast":
+            torch.set_default_tensor_type(torch.HalfTensor)
         with torch.no_grad():
             with precision_scope("cuda"):
                 with model.ema_scope():
@@ -248,7 +255,7 @@ def main():
                         for prompts in tqdm(data, desc="data"):
                             uc = None
                             if opt.scale != 1.0:
-                                uc = model.get_learned_conditioning(batch_size * [""])
+                                uc = model.get_learned_conditioning(negative_prompt_data)
                             if isinstance(prompts, tuple):
                                 prompts = list(prompts)
 
@@ -306,7 +313,7 @@ def main():
                     toc = time.time()
     except Exception as err:
         print(opt.from_file)
-        process_error_trace(traceback.format_exc(), err, opt.from_file)
+        process_error_trace(traceback.format_exc(), err, opt.from_file, outpath)
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

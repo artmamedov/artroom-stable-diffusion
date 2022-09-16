@@ -1,11 +1,15 @@
 import os
 import json
 
-def process_error_trace(trace, err, prompt_file):
+def process_error_trace(trace, err, prompt_file, outpath):
     errorOutPath = os.path.join(os.path.dirname(prompt_file), "error_output.log")
+    errorOutPath2 = os.path.join(outpath, "error_output.log")
     errorJsonPath = os.path.join(os.path.dirname(prompt_file), "error_mode.json")
 
     with open(errorOutPath, 'w') as f:
+        f.write(str(err))
+        f.write(trace)
+    with open(errorOutPath2, 'w') as f:
         f.write(str(err))
         f.write(trace)
     

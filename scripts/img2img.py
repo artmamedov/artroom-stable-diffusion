@@ -115,11 +115,12 @@ def main():
         default=50,
         help="number of ddim sampling steps",
     )
-
     parser.add_argument(
-        "--plms",
-        action='store_true',
-        help="use plms sampling",
+        "--sampler",
+        type=str,
+        help="Choose the sampler used",
+        choices=["ddim","plms"],
+        default="ddim"
     )
     parser.add_argument(
         "--fixed_code",
@@ -240,11 +241,9 @@ def main():
     
     sampler = DDIMSampler(model)
 
-    if opt.plms:
+    if opt.sampler == 'plms':
         # raise NotImplementedError("PLMS sampler not (yet) supported")
         sampler = PLMSSampler(model)
-    else:
-        sampler = DDIMSampler(model)
 
     os.makedirs(opt.outdir, exist_ok=True)
     outpath = opt.outdir
@@ -257,12 +256,18 @@ def main():
         assert prompt is not None
         data = [batch_size * [prompt]]
     else:
-        # print(f"reading prompts from {opt.from_file}")
-        with open(opt.from_file, "r") as f:
+        with open(opt.from_file+"prompt.txt", "r") as f:
             opt.prompt = f.read().splitlines()[0]
             print("Prompt:",opt.prompt)
             # data = list(chunk(opt.prompt, batch_size))
             data = [batch_size * [opt.prompt]]
+        try:
+            with open(opt.from_file+"negative_prompt.txt", "r") as f:
+                negative_prompt = f.read().splitlines()[0]
+                print("Negative Prompt:",negative_prompt)
+                negative_prompt_data = [batch_size * negative_prompt]
+        except:
+            negative_prompt_data = [batch_size * ""]
 
     sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
     os.makedirs(sample_path, exist_ok=True)
@@ -282,6 +287,9 @@ def main():
         print(f"target t_enc is {t_enc} steps")
 
         precision_scope = autocast if opt.precision == "autocast" else nullcontext
+        if opt.precision == "autocast":
+            torch.set_default_tensor_type(torch.HalfTensor)
+
         with torch.no_grad():
             with precision_scope("cuda"):
                 with model.ema_scope():
@@ -291,7 +299,7 @@ def main():
                         for prompts in tqdm(data, desc="data"):
                             uc = None
                             if opt.scale != 1.0:
-                                uc = model.get_learned_conditioning(batch_size * [""])
+                                uc = model.get_learned_conditioning(negative_prompt_data)
                             if isinstance(prompts, tuple):
                                 prompts = list(prompts)
                             
@@ -342,7 +350,7 @@ def main():
                     toc = time.time()
     except Exception as err:
         print(opt.from_file)
-        process_error_trace(traceback.format_exc(), err, opt.from_file)
+        process_error_trace(traceback.format_exc(), err, opt.from_file, outpath)
 
     print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
           f" \nEnjoy.")

@@ -29,6 +29,6 @@ yarn-error.log*
 electron-builder.yml
 
 src/clip
-src/gfpgan/experiments/
-src/realesrgan/experiments/
+src/gfpgan
+src/realesrgan
 src/taming-transformers

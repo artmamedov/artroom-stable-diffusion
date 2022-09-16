@@ -192,8 +192,8 @@ class CrossAttention(nn.Module):
             sim.masked_fill_(~mask, max_neg_value)
             del mask
 
-        sim[4:] = sim[4:].softmax(dim=-1)
-        sim[:4] = sim[:4].softmax(dim=-1)
+        sim[sim.shape[0] // 2:] = sim[sim.shape[0] // 2:].softmax(dim=-1)
+        sim[:sim.shape[0] // 2] = sim[:sim.shape[0] // 2].softmax(dim=-1)
 
         sim = einsum('b i j, b j d -> b i d', sim, v)
         sim = rearrange(sim, '(b h) n d -> b n (h d)', h=h)
@@ -204,26 +204,45 @@ class CrossAttention(nn.Module):
     def slow_forward(self, x, context=None, mask=None):
         h = self.heads
         device = x.device
-        q = self.to_q(x)
+        dtype = x.dtype
+        q_proj = self.to_q(x)
         context = default(context, x)
-        k = self.to_k(context)
-        v = self.to_v(context)
+        k_proj = self.to_k(context)
+        v_proj = self.to_v(context)
+
         del context, x
 
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+        stats = torch.cuda.memory_stats(device)
+        mem_active = stats['active_bytes.all.current']
+        mem_reserved = stats['reserved_bytes.all.current']
+        mem_free_cuda, _ = torch.cuda.mem_get_info(torch.cuda.current_device())
+        mem_free_torch = mem_reserved - mem_active
+        mem_free_total = mem_free_cuda + mem_free_torch
 
-        r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2])
-        for i in range(0, q.shape[0], 2):
+        # mem counted before q k v are generated because they're gonna be stored on cpu
+        allocatable_mem = int(mem_free_total // 2)+1 if dtype == torch.float16 else \
+            int(mem_free_total // 4)+1
+        required_mem = int(q_proj.shape[0] * q_proj.shape[1] * q_proj.shape[2] * 4 * 2 * 50) if dtype == torch.float16 \
+            else int(q_proj.shape[0] * q_proj.shape[1] * q_proj.shape[2] * 8 * 2 * 50)  # the last 50 is for speed
+        chunk_split = (required_mem // allocatable_mem) * 2 if required_mem > allocatable_mem else 1
+        # print(f"allocatable_mem: {allocatable_mem}, required_mem: {required_mem}, chunk_split: {chunk_split}")
+        # print(q.shape) torch.Size([1, 4096, 320])
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q_proj, k_proj, v_proj))
+        del q_proj, k_proj, v_proj
+        torch.cuda.empty_cache()
+
+        r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2], device=torch.device("cpu"))
+        mp = q.shape[1]//chunk_split
+        for i in range(0, q.shape[1], mp):
             q, k = q.to(device), k.to(device)
-            s1 = einsum('b i d, b j d -> b i j', q[i:i + 2], k[i:i + 2])
+            s1 = einsum('b i d, b j d -> b i j', q[:, i:i + mp], k)
             q, k = q.cpu(), k.cpu()
             s1 *= self.scale
-
-            s1[1:] = s1[1:].softmax(dim=-1)
-            s1[:1] = s1[:1].softmax(dim=-1)
-
-            r1[i:i + 2] = einsum('b i j, b j d -> b i d', s1, v[i:i + 2]).cpu()
-        del s1
+            s2 = F.softmax(s1, dim=-1)
+            del s1
+            r1[:, i:i + mp] = einsum('b i j, b j d -> b i d', s2, v).cpu()
+            del s2
         r2 = rearrange(r1.to(device), '(b h) n d -> b n (h d)', h=h).to(device)
         del r1, q, k, v
 
@@ -243,7 +262,6 @@ class BasicTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
-        self.superfastmode = superfastmode
 
     def forward(self, x, context=None):
         return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)

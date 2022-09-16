@@ -8,11 +8,16 @@ latent_diffusion.egg-info/requires.txt
 latent_diffusion.egg-info/top_level.txt
 optimizedSD/__init__.py
 optimizedSD/ddpm.py
+optimizedSD/diffusers_txt2img.py
 optimizedSD/handle_errs.py
+optimizedSD/inpainting.py
+optimizedSD/inpainting_optimized.py
 optimizedSD/openaimodelSplit.py
 optimizedSD/optimUtils.py
 optimizedSD/optimized_img2img.py
+optimizedSD/optimized_img2img_k.py
 optimizedSD/optimized_txt2img.py
+optimizedSD/optimized_txt2img_k.py
 optimizedSD/ldm/__init__.py
 optimizedSD/ldm/lr_scheduler.py
 optimizedSD/ldm/util.py

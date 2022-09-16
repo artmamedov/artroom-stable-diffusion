@@ -17,10 +17,11 @@ from ldm.util import instantiate_from_config
 import re
 from transformers import logging
 logging.set_verbosity_error()
-import traceback
-from handle_errs import process_error_trace 
+
 import torch.nn as nn
-import k_diffusion as K
+import k_diffusion as K    
+import traceback
+from scripts.handle_errs import process_error_trace
 
 def chunk(it, size):
     it = iter(it)
@@ -56,6 +57,7 @@ def create_random_tensors(shape, seeds, device):
     return x
 
 config = "optimizedSD/v1-inference.yaml"
+device = "cuda"
 
 parser = argparse.ArgumentParser()
 
@@ -180,8 +182,8 @@ parser.add_argument(
 parser.add_argument(
     "--sampler",
     type=str,
-    help="Choose the sampler used",
-    choices=["lms", "euler", "euler_a", "dpm", "dpm_a", "heun"],
+    help="Choose the sampler used, lms is the default, euler is k_euler_a, dpm is k_dpm_2_a",
+    choices=["lms", "euler", "dpm"],
     default="lms"
 )
 parser.add_argument(
@@ -189,31 +191,10 @@ parser.add_argument(
     action="store_true",
     help="Reduces inference time on the expense of 1GB VRAM",
 )
-parser.add_argument(
-    "--device",
-    type=str,
-    default="cuda",
-    help="CPU or GPU (cuda/cuda:0/cuda:1/...)",
-)
-parser.add_argument(
-    "--unet_bs",
-    type=int,
-    default=1,
-    help="Slightly reduces inference time at the expense of high VRAM (value > 1 not recommended )",
-)
+
 opt = parser.parse_args()
 
 ckpt = opt.ckpt
-device = opt.device
-
-ksamplers = {'lms': K.sampling.sample_lms, 
-'euler': K.sampling.sample_euler, 
-'euler_a': K.sampling.sample_euler_ancestral, 
-'dpm': K.sampling.sample_dpm_2, 
-'dpm_a': K.sampling.sample_dpm_2_ancestral,
-'heun': K.sampling.sample_heun }
-
-sampler = ksamplers[opt.sampler]
 
 tic = time.time()
 os.makedirs(opt.outdir, exist_ok=True)
@@ -245,58 +226,61 @@ for key in lo:
     sd['model2.' + key[6:]] = sd.pop(key)
 
 config = OmegaConf.load(f"{config}")
-# config.modelUNet.params.ddim_steps = opt.ddim_steps
+config.modelUNet.params.ddim_steps = opt.ddim_steps
 
-# if opt.small_batch:
-#     config.modelUNet.params.small_batch = True
-# else:
-    # config.modelUNet.params.small_batch = False
-
-
-
-model = instantiate_from_config(config.modelUNet)
-_, _ = model.load_state_dict(sd, strict=False)
-model.eval()
-model.cdevice = opt.device
-model.unet_bs = opt.unet_bs
-model.turbo = opt.turbo
-model_wrap = K.external.CompVisDenoiser(model, device=opt.device)
-sigma_min, sigma_max = model_wrap.sigmas[0].item(), model_wrap.sigmas[-1].item()
-
-modelCS = instantiate_from_config(config.modelCondStage)
-_, _ = modelCS.load_state_dict(sd, strict=False)
-modelCS.eval()
-modelCS.cond_stage_model.device = opt.device
-
-modelFS = instantiate_from_config(config.modelFirstStage)
-_, _ = modelFS.load_state_dict(sd, strict=False)
-modelFS.eval()
-
-if opt.precision == "autocast":
-    model.half()
-    modelCS.half()
-
-start_code = None
-if opt.fixed_code:
-    start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
-
-batch_size = opt.n_samples
-n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
-if not opt.from_file:
-    prompt = opt.prompt
-    print("Prompt:",opt.prompt)
-    assert prompt is not None
-    data = [batch_size * [prompt]]
-
+if opt.small_batch:
+    config.modelUNet.params.small_batch = True
 else:
-    # print(f"reading prompts from {opt.from_file}")
-    with open(opt.from_file, "r") as f:
-        opt.prompt = f.read().splitlines()[0]
-        print("Prompt:",opt.prompt)
-        # data = list(chunk(opt.prompt, batch_size))
-        data = [batch_size * [opt.prompt]]
+    config.modelUNet.params.small_batch = False
+
 
 try:
+    model = instantiate_from_config(config.modelUNet)
+    _, _ = model.load_state_dict(sd, strict=False)
+    model.eval()
+    model.turbo = opt.turbo
+        
+    modelCS = instantiate_from_config(config.modelCondStage)
+    _, _ = modelCS.load_state_dict(sd, strict=False)
+    modelCS.eval()
+        
+    modelFS = instantiate_from_config(config.modelFirstStage)
+    _, _ = modelFS.load_state_dict(sd, strict=False)
+    modelFS.eval()
+
+    if opt.precision == "autocast":
+        model.half()
+        modelCS.half()
+
+    start_code = None
+    if opt.fixed_code:
+        start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
+
+    ksamplers = {'lms': K.sampling.sample_lms, 'euler': K.sampling.sample_euler_ancestral, 'dpm': K.sampling.sample_dpm_2_ancestral}
+
+    model_wrap = K.external.CompVisDenoiser(model)
+    sampler = ksamplers[opt.sampler]
+
+    batch_size = opt.n_samples
+    n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
+    if not opt.from_file:
+        prompt = opt.prompt
+        print("Prompt:",opt.prompt)
+        assert prompt is not None
+        data = [batch_size * [prompt]]
+    else:
+        with open(opt.from_file+"prompt.txt", "r") as f:
+            opt.prompt = f.read().splitlines()[0]
+            print("Prompt:",opt.prompt)
+            # data = list(chunk(opt.prompt, batch_size))
+            data = [batch_size * [opt.prompt]]
+        try:
+            with open(opt.from_file+"negative_prompt.txt", "r") as f:
+                negative_prompt = f.read().splitlines()[0]
+                print("Negative Prompt:",negative_prompt)
+                negative_prompt_data = [batch_size * negative_prompt]
+        except:
+            negative_prompt_data = [batch_size * ""]
 
     sample_path = os.path.join(outpath,re.sub(r'\W+', '',"_".join(opt.prompt.split())))[:150]
     os.makedirs(sample_path, exist_ok=True)
@@ -314,40 +298,24 @@ try:
                     modelCS.to(device)
                     uc = None
                     if opt.scale != 1.0:
-                        uc = modelCS.get_learned_conditioning(batch_size * [""])
+                        uc = modelCS.get_learned_conditioning(negative_prompt_data)
                     if isinstance(prompts, tuple):
                         prompts = list(prompts)
                     
                     c = modelCS.get_learned_conditioning(prompts)
                     shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                    
                     mem = torch.cuda.memory_allocated()/1e6
                     modelCS.to("cpu")
                     while(torch.cuda.memory_allocated()/1e6 >= mem):
                         time.sleep(1)
 
-                    shape = [opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f]
-                    if opt.sampler == "plms":
-                        samples_ddim = model.sample(
-                                            S=opt.ddim_steps,
-                                            conditioning=c,
-                                            seed=opt.seed,
-                                            shape=shape,
-                                            verbose=False,
-                                            unconditional_guidance_scale=opt.scale,
-                                            unconditional_conditioning=uc,
-                                            eta=opt.ddim_eta,
-                                            x_T=start_code,
-                                            sampler=opt.sampler,
-                                        )
-                    else:
-                        seeds = list(opt.seed + n*batch_size + i for i in range(batch_size))
-                        sigmas = model_wrap.get_sigmas(opt.ddim_steps)
-                        x = create_random_tensors(shape, seeds, device=opt.device) * sigmas[0]
-                        model_wrap_cfg = CFGDenoiser(model_wrap)
-                        extra_args = {'cond': c, 'uncond': uc, 'cond_scale': opt.scale}
-                        
-                        samples_ddim = sampler(model_wrap_cfg, x, sigmas, extra_args=extra_args, disable=False)
+                    seeds = list(opt.seed + n*batch_size + i for i in range(batch_size))
+                    sigmas = model_wrap.get_sigmas(opt.ddim_steps)
+                    x = create_random_tensors(shape, seeds, device=device) * sigmas[0]
+                    model_wrap_cfg = CFGDenoiser(model_wrap)
+                    extra_args = {'cond': c, 'uncond': uc, 'cond_scale': opt.scale}
+
+                    samples_ddim = sampler(model_wrap_cfg, x, sigmas, extra_args=extra_args, disable=False)
 
                     modelFS.to(device)
                     print("saving images")
@@ -360,7 +328,6 @@ try:
                         Image.fromarray(x_sample.astype(np.uint8)).save(
                             os.path.join(sample_path, "latest.png"))    
                         base_count += 1
-                        opt.seed += 1
 
                     mem = torch.cuda.memory_allocated()/1e6
                     modelFS.to("cpu")
@@ -370,7 +337,7 @@ try:
                     print("memory_final = ", torch.cuda.memory_allocated()/1e6)
 except Exception as err:
     print(opt.from_file)
-    process_error_trace(traceback.format_exc(), err, opt.from_file)
+    process_error_trace(traceback.format_exc(), err, opt.from_file, outpath)
 
 toc = time.time()
 

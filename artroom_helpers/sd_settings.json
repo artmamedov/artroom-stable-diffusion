@@ -1,6 +1,7 @@
 {
     "Settings": {
         "text_prompts": "",
+        "negative_prompts": "",
         "batch_name": "EnterFolderName",
         "steps": "50",
         "aspect_ratio": "1:1",
@@ -14,6 +15,7 @@
         "sampler": "k_lms",
         "init_image": "",
         "strength": 0.75,
+        "reverse_mask": false,
         "error_mode": 0
     },
     "Config": {
@@ -21,6 +23,9 @@
         "use_turbo": true,
         "use_superfast": true,
         "use_full_precision": false,
-        "image_save_path": "%UserProfile%/Desktop"
+        "image_save_path": "%UserProfile%/Desktop",
+        "model_ckpt": "%UserProfile%/artroom/model_weights/model.ckpt",
+        "model_ckpt_dir": "",
+        "save_grid": false
     }
 }

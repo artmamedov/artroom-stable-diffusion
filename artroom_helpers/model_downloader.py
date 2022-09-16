@@ -7,6 +7,10 @@ import time
 #import gdown
 import requests
 import shutil
+import ctypes
+
+kernel32 = ctypes.windll.kernel32
+kernel32.SetConsoleMode(kernel32.GetStdHandle(-10), 128)
 
 #Set up settings
 userprofile = os.environ["USERPROFILE"]
@@ -62,7 +66,15 @@ upscale_models = {
         "model_dest": "stable-diffusion/src/realesrgan/experiments/pretrained_models/"
     },
     "GFPGAN": {
-        "model_source": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth", 
+        "model_source": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth", 
+        "model_dest": "stable-diffusion/src/gfpgan/experiments/pretrained_models/"
+    },
+    "Codeformer": {
+        "model_source": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/CodeFormer.pth", 
+        "model_dest": "stable-diffusion/src/gfpgan/experiments/pretrained_models/"
+    },
+    "RestoreFormer": {
+        "model_source": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/RestoreFormer.pth", 
         "model_dest": "stable-diffusion/src/gfpgan/experiments/pretrained_models/"
     },
      "detection_Resnet50-lib": {
@@ -120,6 +132,14 @@ userprofile = os.environ["USERPROFILE"]
 if "%UserProfile%" in model_path:
     model_path = model_path.replace("%UserProfile%",userprofile)
 
+sd_json = json.load(open(f"{userprofile}/artroom/settings/sd_settings.json"))
+sd_settings = sd_json['Settings']
+sd_config = sd_json['Config']
+
+custom_model_path = sd_config['model_ckpt']
+if "%UserProfile%" in custom_model_path:
+    custom_model_path = custom_model_path.replace("%UserProfile%",userprofile)
+
 #Remove broken download if failed during install
 if os.path.exists("model.ckpt"):
     os.remove("model.ckpt")
@@ -127,7 +147,7 @@ os.makedirs(model_path, exist_ok=True)
 
 try: 
     if os.path.exists(sd_path):
-        if os.path.exists(model_path+"/model.ckpt"):
+        if os.path.exists(model_path+"/model.ckpt") or os.path.exists(custom_model_path):
             print("Model found")
         else:
             print("Model not found")

@@ -4,6 +4,9 @@ import os
 userprofile = os.environ["USERPROFILE"]
 data = json.loads(sys.argv[1])
 
+
+#An array of image paths
+
 data['upscale_folder'] = data['upscale_folder'].strip()
 
 with open(f"{userprofile}/artroom/settings/upscale_settings.json", "w") as outfile:
