@@ -1,3 +1,0 @@
-optimizedSD
-optimizedSD_K
-scripts

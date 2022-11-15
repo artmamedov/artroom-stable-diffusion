@@ -1,8 +1,0 @@
-{
-    "possible_sources":[
-        "https://drive.yerf.org/wl/?id=EBfTrmcCCUAGaQBXVIj5lJmEhjoP1tgl&mode=grid&download=1"
-    ],
-    "sd_path":"stable-diffusion/",
-    "model_path":"%UserProfile%/artroom/model_weights/",
-    "model_name":"model.ckpt"
-}
