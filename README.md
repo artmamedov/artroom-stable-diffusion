@@ -4,6 +4,7 @@
 Currently, Artroom only supports NVIDIA GPUs and have a recommended amount of 8GB VRAM (4GB minimum). This will be updated in the future. 
 
 ![8](https://user-images.githubusercontent.com/59179719/202012552-75ef881b-e6fa-4b3f-8b4e-191a1f3ce240.PNG)
+- credit to VITHERENEGADE "Prompt Queen" 
 
 # Support 
 If you have questions, comments, or just want to stop by and chat, [join the Discord](https://discord.gg/XNEmesgTFy)
